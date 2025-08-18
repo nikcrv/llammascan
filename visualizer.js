@@ -1177,4 +1177,4 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load cache data
     loadCacheData();
-});
+});// Cache bust: Пн 18 авг 2025 09:26:57 EET
