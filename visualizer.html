@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Curve Liquidations Visualizer</title>
+    <title>Curve Liquidations Protect Dashboard</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
@@ -211,27 +211,27 @@
 </head>
 <body>
     <div class="container">
-        <h1>🔍 Curve Liquidations Dashboard</h1>
+        <h1>Curve Liquidations Protect Dashboard</h1>
         
         <!-- Controls -->
         <div class="controls">
             <div class="control-group">
-                <label for="network">Сеть:</label>
+                <label for="network">Network:</label>
                 <select id="network">
-                    <option value="all">Все сети</option>
+                    <option value="all">All Networks</option>
                     <option value="ethereum">Ethereum</option>
                     <option value="arbitrum">Arbitrum</option>
                     <option value="fraxtal">Fraxtal</option>
                 </select>
                 
-                <label for="dateFrom">От:</label>
+                <label for="dateFrom">From:</label>
                 <input type="date" id="dateFrom" value="2025-01-01">
                 
-                <label for="dateTo">До:</label>
+                <label for="dateTo">To:</label>
                 <input type="date" id="dateTo" value="2025-08-14">
                 
-                <button onclick="updateDashboard()">📊 Обновить</button>
-                <button onclick="loadCacheData()">🔄 Перезагрузить кеш</button>
+                <button onclick="updateDashboard()">Update</button>
+                <button onclick="loadCacheData()">Reload Cache</button>
             </div>
         </div>
         
@@ -239,56 +239,79 @@
         <div class="stats-grid" id="statsGrid">
             <div class="stat-card">
                 <div class="stat-value loading-pulse">--</div>
-                <div class="stat-label">Софт-ликвидаций</div>
+                <div class="stat-label">Liquidation Protection Mode</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value loading-pulse">--</div>
-                <div class="stat-label">Хард-ликвидаций</div>
+                <div class="stat-label">Hard Liquidations</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value loading-pulse">--</div>
-                <div class="stat-label">Общий объем (USD)</div>
+                <div class="stat-label">Total Volume (USD)</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value loading-pulse">--</div>
-                <div class="stat-label">Активных маркетов</div>
+                <div class="stat-label">Active Markets</div>
             </div>
         </div>
         
         <!-- Cache Information -->
         <div class="card">
-            <h2>📦 Доступные данные в кеше</h2>
+            <h2>Available Cache Data</h2>
             <div id="cacheInfo" class="cache-info">
-                <div class="loading-pulse">Загрузка информации о кеше...</div>
+                <div class="loading-pulse">Loading cache information...</div>
             </div>
         </div>
         
         <!-- Main Chart -->
         <div class="chart-container">
-            <h2>📈 Динамика ликвидаций</h2>
+            <h2>Liquidations Over Time</h2>
             <div id="mainChart" style="height: 400px;"></div>
         </div>
         
         <!-- Comparison Chart -->
         <div class="chart-container">
-            <h2>⚖️ Софт vs Хард ликвидации</h2>
+            <h2>Liquidation Protection vs Full Liquidations</h2>
             <div id="comparisonChart" style="height: 400px;"></div>
         </div>
         
         <!-- Network Distribution -->
         <div class="dashboard">
             <div class="card">
-                <h2>🌐 Распределение по сетям</h2>
-                <div id="networkChart" style="height: 300px;"></div>
+                <h2>Liquidation Protection Mode by Network</h2>
+                <div id="networkChartSoft" style="height: 300px;"></div>
             </div>
             
             <div class="card">
-                <h2>💰 Топ маркеты по объему</h2>
-                <div id="topMarkets" style="height: 300px;"></div>
+                <h2>Hard Liquidations by Network</h2>
+                <div id="networkChartHard" style="height: 300px;"></div>
             </div>
+        </div>
+        
+        <!-- Top Markets -->
+        <div class="chart-container">
+            <h2>Top Markets by Volume</h2>
+            <div id="topMarkets" style="height: 400px;"></div>
+        </div>
+        
+        <!-- Funds Saved Charts -->
+        <div class="chart-container">
+            <h2>Total Funds Saved</h2>
+            <div id="fundsSavedTotal" style="height: 300px;"></div>
+        </div>
+        
+        <div class="chart-container">
+            <h2>Funds Saved by Platform</h2>
+            <div id="fundsSavedChart" style="height: 400px;"></div>
+        </div>
+        
+        <!-- Top Tokens by Hard Liquidation -->
+        <div class="chart-container">
+            <h2>Top Collateral Tokens by Full Liquidation Value</h2>
+            <div id="topTokensChart" style="height: 400px;"></div>
         </div>
     </div>
     
-    <script src="visualizer.js"></script>
+    <script src="visualizer.js?v=20250818"></script>
 </body>
 </html>
