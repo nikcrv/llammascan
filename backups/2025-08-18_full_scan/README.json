@@ -1,0 +1,13 @@
+{
+  "backup_date": "2025-08-18",
+  "description": "Full scan data for all networks (Ethereum, Arbitrum, Fraxtal) for H1 2025",
+  "period": "January 1, 2025 - June 30, 2025",
+  "networks": {
+    "ethereum": "6 markets - 100% complete",
+    "arbitrum": "8 markets - 99.91% complete",
+    "fraxtal": "2 markets - 100% complete"
+  },
+  "total_markets": 16,
+  "cache_file_size": "11M",
+  "notes": "Arbitrum scanning reached 99.91% (missing last ~23 hours of June 30)"
+}
