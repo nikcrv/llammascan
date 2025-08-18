@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Curve Liquidations Protect Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .controls {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .control-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        label {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        select, input[type="date"] {
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        select:focus, input[type="date"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        
+        button:hover {
+            transform: scale(1.05);
+        }
+        
+        .network-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin: 5px;
+        }
+        
+        .network-ethereum {
+            background: #627EEA;
+            color: white;
+        }
+        
+        .network-arbitrum {
+            background: #28A0F0;
+            color: white;
+        }
+        
+        .network-fraxtal {
+            background: #FF6B6B;
+            color: white;
+        }
+        
+        .cache-info {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 10px;
+        }
+        
+        .cache-range {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            background: white;
+            border-radius: 5px;
+            margin: 5px 0;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: white;
+            font-size: 1.2rem;
+        }
+        
+        .error {
+            background: #ff4444;
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .loading-pulse {
+            animation: pulse 2s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Curve Liquidations Protect Dashboard</h1>
+        
+        <!-- Controls -->
+        <div class="controls">
+            <div class="control-group">
+                <label for="network">Network:</label>
+                <select id="network">
+                    <option value="all">All Networks</option>
+                    <option value="ethereum">Ethereum</option>
+                    <option value="arbitrum">Arbitrum</option>
+                    <option value="fraxtal">Fraxtal</option>
+                </select>
+                
+                <label for="dateFrom">From:</label>
+                <input type="date" id="dateFrom" value="2025-01-01">
+                
+                <label for="dateTo">To:</label>
+                <input type="date" id="dateTo" value="2025-08-14">
+                
+                <button onclick="updateDashboard()">Update</button>
+                <button onclick="loadCacheData()">Reload Cache</button>
+            </div>
+        </div>
+        
+        <!-- Statistics Cards -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-value loading-pulse">--</div>
+                <div class="stat-label">Liquidation Protection Mode</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value loading-pulse">--</div>
+                <div class="stat-label">Hard Liquidations</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value loading-pulse">--</div>
+                <div class="stat-label">Total Volume (USD)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value loading-pulse">--</div>
+                <div class="stat-label">Active Markets</div>
+            </div>
+        </div>
+        
+        <!-- Cache Information -->
+        <div class="card">
+            <h2>Available Cache Data</h2>
+            <div id="cacheInfo" class="cache-info">
+                <div class="loading-pulse">Loading cache information...</div>
+            </div>
+        </div>
+        
+        <!-- Main Chart -->
+        <div class="chart-container">
+            <h2>Liquidations Over Time</h2>
+            <div id="mainChart" style="height: 400px;"></div>
+        </div>
+        
+        <!-- Comparison Chart -->
+        <div class="chart-container">
+            <h2>Liquidation Protection vs Full Liquidations</h2>
+            <div id="comparisonChart" style="height: 400px;"></div>
+        </div>
+        
+        <!-- Network Distribution -->
+        <div class="dashboard">
+            <div class="card">
+                <h2>Liquidation Protection Mode by Network</h2>
+                <div id="networkChartSoft" style="height: 300px;"></div>
+            </div>
+            
+            <div class="card">
+                <h2>Hard Liquidations by Network</h2>
+                <div id="networkChartHard" style="height: 300px;"></div>
+            </div>
+        </div>
+        
+        <!-- Top Markets -->
+        <div class="chart-container">
+            <h2>Top Markets by Volume</h2>
+            <div id="topMarkets" style="height: 400px;"></div>
+        </div>
+        
+        <!-- Funds Saved Charts -->
+        <div class="chart-container">
+            <h2>Total Funds Saved</h2>
+            <div id="fundsSavedTotal" style="height: 300px;"></div>
+        </div>
+        
+        <div class="chart-container">
+            <h2>Funds Saved by Platform</h2>
+            <div id="fundsSavedChart" style="height: 400px;"></div>
+        </div>
+        
+        <!-- Top Tokens by Hard Liquidation -->
+        <div class="chart-container">
+            <h2>Top Collateral Tokens by Full Liquidation Value</h2>
+            <div id="topTokensChart" style="height: 400px;"></div>
+        </div>
+    </div>
+    
+    <script src="visualizer.js?v=20250818"></script>
+</body>
+</html>
