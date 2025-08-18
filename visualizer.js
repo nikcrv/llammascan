@@ -226,6 +226,8 @@ function updateCacheInfo() {
     const networkRanges = {};
     
     Object.keys(cacheData).forEach(key => {
+        if (key === 'hard_liquidations') return; // Skip hard liquidations
+        
         const parts = key.split('_');
         const network = parts[0];
         const marketData = cacheData[key];
