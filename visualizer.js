@@ -14,6 +14,20 @@ async function loadCacheData() {
         
         processCacheData();
         updateCacheInfo();
+        
+        // Set date inputs to the full available range in cache
+        const { minDate, maxDate } = getCacheDateRange();
+        if (minDate && maxDate) {
+            document.getElementById('dateFrom').value = minDate.toISOString().split('T')[0];
+            document.getElementById('dateTo').value = maxDate.toISOString().split('T')[0];
+        } else {
+            // Fallback to last month if no cache data
+            const today = new Date();
+            const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+            document.getElementById('dateFrom').value = monthAgo.toISOString().split('T')[0];
+            document.getElementById('dateTo').value = today.toISOString().split('T')[0];
+        }
+        
         updateDashboard();
     } catch (error) {
         console.error('Error loading cache:', error);
@@ -1166,15 +1180,38 @@ function updateTopTokensChart() {
     Plotly.newPlot('topTokensChart', data, layout, {responsive: true});
 }
 
+// Get min and max dates from cache data
+function getCacheDateRange() {
+    let minDate = null;
+    let maxDate = null;
+    
+    Object.keys(cacheData).forEach(key => {
+        if (key === 'hard_liquidations') return;
+        
+        const parts = key.split('_');
+        const network = parts[0];
+        const marketData = cacheData[key];
+        
+        if (marketData.range) {
+            const minBlock = marketData.range.from_block;
+            const maxBlock = marketData.range.to_block;
+            const marketMinDate = estimateDate(network, minBlock);
+            const marketMaxDate = estimateDate(network, maxBlock);
+            
+            if (!minDate || marketMinDate < minDate) {
+                minDate = marketMinDate;
+            }
+            if (!maxDate || marketMaxDate > maxDate) {
+                maxDate = marketMaxDate;
+            }
+        }
+    });
+    
+    return { minDate, maxDate };
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Set default dates - last month
-    const today = new Date();
-    const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-    
-    document.getElementById('dateFrom').value = monthAgo.toISOString().split('T')[0];
-    document.getElementById('dateTo').value = today.toISOString().split('T')[0];
-    
-    // Load cache data
+    // Load cache data first, then set dates based on available data
     loadCacheData();
-});// Cache bust: Пн 18 авг 2025 09:26:57 EET
+});
