@@ -18,7 +18,7 @@ async function loadCacheData() {
     } catch (error) {
         console.error('Error loading cache:', error);
         document.getElementById('cacheInfo').innerHTML = 
-            '<div class="error">Ошибка загрузки кеша. Убедитесь, что файл cache_data.json существует.</div>';
+            '<div class="error">Cache loading error. Make sure cache_data.json file exists.</div>';
     }
 }
 
@@ -33,11 +33,65 @@ function processCacheData() {
             hardLiquidations: 0,
             totalVolume: 0,
             uniqueMarkets: new Set()
-        }
+        },
+        hardLiquidationsList: []  // List of actual hard liquidations
     };
     
-    // Process each market in cache
+    // First process hard liquidations from database
+    if (cacheData.hard_liquidations) {
+        processedData.hardLiquidationsList = cacheData.hard_liquidations;
+        
+        // Aggregate hard liquidations by dates
+        cacheData.hard_liquidations.forEach(liq => {
+            const date = new Date(liq.date);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            if (!processedData.byDate[dateStr]) {
+                processedData.byDate[dateStr] = {
+                    soft: 0,
+                    hard: 0,
+                    volume: 0,
+                    positions: []
+                };
+            }
+            
+            processedData.byDate[dateStr].hard += 1;
+            processedData.byDate[dateStr].volume += liq.debt_repaid || 0;
+            
+            // By networks
+            const network = liq.network;
+            if (!processedData.byNetwork[network]) {
+                processedData.byNetwork[network] = {
+                    soft: 0,
+                    hard: 0,
+                    volume: 0,
+                    dateRange: { min: null, max: null }
+                };
+            }
+            processedData.byNetwork[network].hard += 1;
+            
+            // By markets
+            const market = liq.market;
+            if (!processedData.byMarket[market]) {
+                processedData.byMarket[market] = {
+                    soft: 0,
+                    hard: 0,
+                    volume: 0,
+                    network: network
+                };
+            }
+            processedData.byMarket[market].hard += 1;
+            
+            processedData.totals.hardLiquidations += 1;
+        });
+    }
+    
+    // First, collect the last snapshot per day for each market
+    const marketDailySnapshots = {};
+    
     Object.keys(cacheData).forEach(key => {
+        if (key === 'hard_liquidations') return; // Skip special field
+        
         const parts = key.split('_');
         const network = parts[0];
         const market = parts[parts.length - 1];
@@ -45,11 +99,39 @@ function processCacheData() {
         const marketData = cacheData[key];
         if (!marketData.results) return;
         
+        // Group snapshots by date and keep only the last one for each date
+        const dailySnapshots = {};
+        
         marketData.results.forEach(snapshot => {
-            // Get date from block timestamp if available
             const blockNumber = snapshot.block_number;
             const date = estimateDate(network, blockNumber);
             const dateStr = date.toISOString().split('T')[0];
+            
+            // Keep only the latest snapshot for each date
+            if (!dailySnapshots[dateStr] || snapshot.block_number > dailySnapshots[dateStr].block_number) {
+                dailySnapshots[dateStr] = {
+                    snapshot: snapshot,
+                    network: network,
+                    market: market,
+                    date: date,
+                    block_number: snapshot.block_number
+                };
+            }
+        });
+        
+        marketDailySnapshots[key] = dailySnapshots;
+    });
+    
+    // Now process the last snapshots for each day
+    Object.keys(marketDailySnapshots).forEach(marketKey => {
+        const dailySnapshots = marketDailySnapshots[marketKey];
+        
+        Object.keys(dailySnapshots).forEach(dateStr => {
+            const data = dailySnapshots[dateStr];
+            const snapshot = data.snapshot;
+            const network = data.network;
+            const market = data.market;
+            const date = data.date;
             
             // Initialize date entry
             if (!processedData.byDate[dateStr]) {
@@ -81,27 +163,21 @@ function processCacheData() {
                 };
             }
             
-            // Count liquidations
+            // Count liquidations from last snapshot only
             const softCount = snapshot.soft_liq_count || 0;
-            const totalPositions = snapshot.total_positions || 0;
-            const hardCount = totalPositions - softCount - (snapshot.ignored_positions || 0);
             const volume = snapshot.total_collateral_usd || 0;
             
-            // Update aggregates
+            // Update aggregates (now using only last snapshot per day)
             processedData.byDate[dateStr].soft += softCount;
-            processedData.byDate[dateStr].hard += hardCount;
             processedData.byDate[dateStr].volume += volume;
             
             processedData.byNetwork[network].soft += softCount;
-            processedData.byNetwork[network].hard += hardCount;
             processedData.byNetwork[network].volume += volume;
             
             processedData.byMarket[market].soft += softCount;
-            processedData.byMarket[market].hard += hardCount;
             processedData.byMarket[market].volume += volume;
             
             processedData.totals.softLiquidations += softCount;
-            processedData.totals.hardLiquidations += hardCount;
             processedData.totals.totalVolume += volume;
             processedData.totals.uniqueMarkets.add(market);
             
@@ -145,7 +221,7 @@ function estimateDate(network, blockNumber) {
 // Update cache information display
 function updateCacheInfo() {
     const cacheInfoDiv = document.getElementById('cacheInfo');
-    let html = '<div style="font-weight: bold; margin-bottom: 10px;">Доступные периоды:</div>';
+    let html = '<div style="font-weight: bold; margin-bottom: 15px; margin-top: 10px;">Available date ranges:</div>';
     
     const networkRanges = {};
     
@@ -185,15 +261,15 @@ function updateCacheInfo() {
             html += `
                 <div class="cache-range">
                     <span class="network-badge network-${network}">${network}</span>
-                    <span>${range.min.toLocaleDateString()} - ${range.max.toLocaleDateString()}</span>
-                    <span>${range.markets.size} маркетов</span>
+                    <span>${range.min.toLocaleDateString('en-US')} - ${range.max.toLocaleDateString('en-US')}</span>
+                    <span>${range.markets.size} markets</span>
                 </div>
             `;
         }
     });
     
     if (Object.keys(networkRanges).length === 0) {
-        html = '<div>Нет данных в кеше</div>';
+        html = '<div>No data in cache</div>';
     }
     
     cacheInfoDiv.innerHTML = html;
@@ -239,61 +315,103 @@ function updateDashboard() {
     // Update charts
     updateMainChart(filteredData);
     updateComparisonChart(filteredData);
-    updateNetworkChart();
+    updateNetworkCharts();
     updateTopMarkets();
+    updateFundsSavedTotal();
+    updateFundsSavedChart();
+    updateTopTokensChart();
 }
 
 // Update statistics cards
 function updateStats(data) {
-    // Считаем реальный объем из последних снапшотов (как в отчете)
-    let realTotalVolume = 0;
-    let uniquePositions = new Set();
-    let totalSoftCount = 0;
-    let totalHardCount = 0;
+    // Get selected period and network
+    const networkFilter = document.getElementById('network').value;
+    const dateFrom = new Date(document.getElementById('dateFrom').value);
+    const dateTo = new Date(document.getElementById('dateTo').value);
     
-    // Проходим по всем маркетам и берем последний снапшот
+    let maxTotalVolume = 0;
+    let uniquePositions = new Set();
+    let maxSoftCount = 0;
+    let activeMarkets = new Set();
+    
+    // For each market find maximum volume for period
     Object.keys(cacheData).forEach(key => {
+        const parts = key.split('_');
+        const market = parts[parts.length - 1];
+        const network = parts[0];
         const marketData = cacheData[key];
+        
+        // Filter by network
+        if (networkFilter !== 'all' && network !== networkFilter) return;
+        
         if (!marketData.results || marketData.results.length === 0) return;
         
-        // Берем последний снапшот
-        const lastSnapshot = marketData.results.reduce((latest, current) => {
-            const latestBlock = latest.block_number || 0;
-            const currentBlock = current.block_number || 0;
-            return currentBlock > latestBlock ? current : latest;
+        let maxMarketVolume = 0;
+        let maxMarketSoftCount = 0;
+        let marketHasData = false;
+        
+        // Go through snapshots and find maximum values for period
+        marketData.results.forEach(snapshot => {
+            const blockNumber = snapshot.block_number;
+            const snapshotDate = estimateDate(network, blockNumber);
+            
+            if (snapshotDate >= dateFrom && snapshotDate <= dateTo) {
+                marketHasData = true;
+                
+                // Calculate volume
+                let snapshotVolume = 0;
+                if (snapshot.position_details) {
+                    Object.entries(snapshot.position_details).forEach(([posKey, pos]) => {
+                        uniquePositions.add(posKey);
+                        snapshotVolume += pos.total_usd || 0;
+                    });
+                } else {
+                    snapshotVolume = snapshot.total_collateral_usd || 0;
+                }
+                
+                // Take maximum values
+                maxMarketVolume = Math.max(maxMarketVolume, snapshotVolume);
+                maxMarketSoftCount = Math.max(maxMarketSoftCount, snapshot.soft_liq_count || 0);
+            }
         });
         
-        // Считаем из position_details (уникальные позиции)
-        if (lastSnapshot.position_details) {
-            Object.entries(lastSnapshot.position_details).forEach(([posKey, pos]) => {
-                uniquePositions.add(posKey);
-                realTotalVolume += pos.total_usd || 0;
-            });
+        if (marketHasData) {
+            activeMarkets.add(market);
+            maxTotalVolume += maxMarketVolume;
+            maxSoftCount += maxMarketSoftCount;
         }
-        
-        totalSoftCount += lastSnapshot.soft_liq_count || 0;
-        const totalPos = lastSnapshot.total_positions || 0;
-        const ignoredPos = lastSnapshot.ignored_positions || 0;
-        totalHardCount += Math.max(0, totalPos - totalSoftCount - ignoredPos);
     });
+    
+    // Count hard liquidations for period
+    let hardLiqCount = 0;
+    if (processedData.hardLiquidationsList) {
+        processedData.hardLiquidationsList.forEach(liq => {
+            const liqDate = new Date(liq.date);
+            if (liqDate >= dateFrom && liqDate <= dateTo) {
+                if (networkFilter === 'all' || liq.network === networkFilter) {
+                    hardLiqCount++;
+                }
+            }
+        });
+    }
     
     const statsGrid = document.getElementById('statsGrid');
     statsGrid.innerHTML = `
         <div class="stat-card">
-            <div class="stat-value">${uniquePositions.size.toLocaleString()}</div>
-            <div class="stat-label">Уникальных позиций</div>
+            <div class="stat-value">${maxSoftCount.toLocaleString()}</div>
+            <div class="stat-label">Liquidation Protection Mode</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">${totalSoftCount.toLocaleString()}</div>
-            <div class="stat-label">Софт-ликвидаций</div>
+            <div class="stat-value">${hardLiqCount.toLocaleString()}</div>
+            <div class="stat-label">Hard Liquidations</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">$${(realTotalVolume / 1000000).toFixed(2)}M</div>
-            <div class="stat-label">Реальный объем (USD)</div>
+            <div class="stat-value">$${(maxTotalVolume / 1000000).toFixed(2)}M</div>
+            <div class="stat-label">Max Volume for Period</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">${processedData.totals.uniqueMarkets.size}</div>
-            <div class="stat-label">Активных маркетов</div>
+            <div class="stat-value">${activeMarkets.size}</div>
+            <div class="stat-label">Active Markets</div>
         </div>
     `;
 }
@@ -308,7 +426,7 @@ function updateMainChart(data) {
     const trace1 = {
         x: dates,
         y: softValues,
-        name: 'Софт-ликвидации',
+        name: 'Liquidation Protection Mode',
         type: 'scatter',
         mode: 'lines+markers',
         line: { color: '#667eea', width: 2 },
@@ -318,7 +436,7 @@ function updateMainChart(data) {
     const trace2 = {
         x: dates,
         y: hardValues,
-        name: 'Хард-ликвидации',
+        name: 'Hard Liquidations',
         type: 'scatter',
         mode: 'lines+markers',
         line: { color: '#ff4444', width: 2 },
@@ -328,7 +446,7 @@ function updateMainChart(data) {
     const trace3 = {
         x: dates,
         y: volumeValues,
-        name: 'Объем (USD)',
+        name: 'Volume (USD)',
         type: 'scatter',
         mode: 'lines',
         line: { color: '#44bb44', width: 1, dash: 'dot' },
@@ -339,15 +457,15 @@ function updateMainChart(data) {
     const layout = {
         title: '',
         xaxis: {
-            title: 'Дата',
+            title: 'Date',
             gridcolor: '#e0e0e0'
         },
         yaxis: {
-            title: 'Количество ликвидаций',
+            title: 'Number of Liquidations',
             gridcolor: '#e0e0e0'
         },
         yaxis2: {
-            title: 'Объем (USD)',
+            title: 'Volume (USD)',
             overlaying: 'y',
             side: 'right'
         },
@@ -372,7 +490,7 @@ function updateComparisonChart(data) {
     const trace1 = {
         x: dates,
         y: softValues,
-        name: 'Софт-ликвидации',
+        name: 'Liquidation Protection Mode',
         type: 'bar',
         marker: { color: '#667eea' }
     };
@@ -380,7 +498,7 @@ function updateComparisonChart(data) {
     const trace2 = {
         x: dates,
         y: hardValues,
-        name: 'Хард-ликвидации',
+        name: 'Hard Liquidations',
         type: 'bar',
         marker: { color: '#ff4444' }
     };
@@ -388,11 +506,11 @@ function updateComparisonChart(data) {
     const layout = {
         barmode: 'stack',
         xaxis: {
-            title: 'Дата',
+            title: 'Date',
             gridcolor: '#e0e0e0'
         },
         yaxis: {
-            title: 'Количество',
+            title: 'Count',
             gridcolor: '#e0e0e0'
         },
         hovermode: 'x unified',
@@ -407,67 +525,169 @@ function updateComparisonChart(data) {
     Plotly.newPlot('comparisonChart', [trace1, trace2], layout, {responsive: true});
 }
 
-// Update network distribution chart
-function updateNetworkChart() {
-    const networks = Object.keys(processedData.byNetwork);
-    const values = networks.map(n => processedData.byNetwork[n].volume);
+// Update network distribution charts
+function updateNetworkCharts() {
+    const networkFilter = document.getElementById('network').value;
+    const dateFrom = new Date(document.getElementById('dateFrom').value);
+    const dateTo = new Date(document.getElementById('dateTo').value);
     
-    const data = [{
-        values: values,
-        labels: networks,
+    // Calculate soft and hard liquidation volumes by network for selected period
+    const softVolumeByNetwork = {};
+    const hardVolumeByNetwork = {};
+    
+    // Soft liquidations (volume in USD)
+    Object.keys(cacheData).forEach(key => {
+        if (key === 'hard_liquidations') return;
+        
+        const parts = key.split('_');
+        const network = parts[0];
+        const marketData = cacheData[key];
+        
+        if (networkFilter !== 'all' && network !== networkFilter) return;
+        if (!marketData.results) return;
+        
+        if (!softVolumeByNetwork[network]) {
+            softVolumeByNetwork[network] = 0;
+        }
+        
+        marketData.results.forEach(snapshot => {
+            const blockNumber = snapshot.block_number;
+            const snapshotDate = estimateDate(network, blockNumber);
+            
+            if (snapshotDate >= dateFrom && snapshotDate <= dateTo) {
+                // Add volume in USD, not count
+                softVolumeByNetwork[network] += snapshot.total_collateral_usd || 0;
+            }
+        });
+    });
+    
+    // Hard liquidations (volume in USD)
+    if (processedData.hardLiquidationsList) {
+        processedData.hardLiquidationsList.forEach(liq => {
+            const liqDate = new Date(liq.date);
+            if (liqDate >= dateFrom && liqDate <= dateTo) {
+                if (networkFilter === 'all' || liq.network === networkFilter) {
+                    if (!hardVolumeByNetwork[liq.network]) {
+                        hardVolumeByNetwork[liq.network] = 0;
+                    }
+                    // Add debt repaid volume, not count
+                    hardVolumeByNetwork[liq.network] += liq.debt_repaid || 0;
+                }
+            }
+        });
+    }
+    
+    // Soft liquidations chart
+    const softNetworks = Object.keys(softVolumeByNetwork);
+    const softValues = softNetworks.map(n => softVolumeByNetwork[n]);
+    
+    const softData = [{
+        values: softValues,
+        labels: softNetworks.map(n => n.charAt(0).toUpperCase() + n.slice(1)),
         type: 'pie',
         marker: {
-            colors: ['#627EEA', '#28A0F0', '#FF6B6B']
-        }
+            colors: ['#667eea', '#764ba2', '#f093fb']
+        },
+        textinfo: 'label+percent',
+        text: softValues.map(v => `$${(v/1000000).toFixed(2)}M`),
+        textposition: 'outside',
+        hovertemplate: '%{label}: $%{value:,.0f}<br>%{percent}<extra></extra>'
     }];
     
-    const layout = {
-        margin: { t: 0, b: 0 }
+    const softLayout = {
+        margin: { t: 10, b: 10 },
+        showlegend: false
     };
     
-    Plotly.newPlot('networkChart', data, layout, {responsive: true});
+    Plotly.newPlot('networkChartSoft', softData, softLayout, {responsive: true});
+    
+    // Hard liquidations chart
+    const hardNetworks = Object.keys(hardVolumeByNetwork);
+    const hardValues = hardNetworks.map(n => hardVolumeByNetwork[n]);
+    
+    if (hardNetworks.length > 0 && hardValues.some(v => v > 0)) {
+        const hardData = [{
+            values: hardValues,
+            labels: hardNetworks.map(n => n.charAt(0).toUpperCase() + n.slice(1)),
+            type: 'pie',
+            marker: {
+                colors: ['#ff6b6b', '#ff8787', '#ffa3a3']
+            },
+            textinfo: 'label+percent',
+            text: hardValues.map(v => `$${(v/1000000).toFixed(2)}M`),
+            textposition: 'outside',
+            hovertemplate: '%{label}: $%{value:,.0f}<br>%{percent}<extra></extra>'
+        }];
+        
+        const hardLayout = {
+            margin: { t: 10, b: 10 },
+            showlegend: false
+        };
+        
+        Plotly.newPlot('networkChartHard', hardData, hardLayout, {responsive: true});
+    } else {
+        // If no hard liquidations, show message
+        document.getElementById('networkChartHard').innerHTML = 
+            '<div style="text-align: center; padding: 50px; color: #999;">No hard liquidation data for selected period</div>';
+    }
 }
 
 // Update top markets chart
 function updateTopMarkets() {
-    // Используем последний снапшот для каждого маркета (как в отчете)
-    const marketLastVolumes = {};
+    // Get selected period
+    const networkFilter = document.getElementById('network').value;
+    const dateFrom = new Date(document.getElementById('dateFrom').value);
+    const dateTo = new Date(document.getElementById('dateTo').value);
     
-    // Проходим по всем маркетам и берем последний снапшот
+    // Calculate maximum volume for each market for selected period
+    const marketVolumes = {};
+    
     Object.keys(cacheData).forEach(key => {
         const parts = key.split('_');
         const market = parts[parts.length - 1];
         const network = parts[0];
         const marketData = cacheData[key];
         
+        // Filter by network if selected
+        if (networkFilter !== 'all' && network !== networkFilter) return;
+        
         if (!marketData.results || marketData.results.length === 0) return;
         
-        // Берем последний снапшот (с максимальным block_number)
-        const lastSnapshot = marketData.results.reduce((latest, current) => {
-            const latestBlock = latest.block_number || 0;
-            const currentBlock = current.block_number || 0;
-            return currentBlock > latestBlock ? current : latest;
+        // Find maximum volume for period
+        let maxVolumeInPeriod = 0;
+        
+        marketData.results.forEach(snapshot => {
+            // Проверяем попадает ли снапшот в выбранный период
+            const blockNumber = snapshot.block_number;
+            const snapshotDate = estimateDate(network, blockNumber);
+            
+            if (snapshotDate >= dateFrom && snapshotDate <= dateTo) {
+                // Calculate volume из position_details или total_collateral_usd
+                let snapshotVolume = 0;
+                
+                if (snapshot.position_details) {
+                    Object.values(snapshot.position_details).forEach(pos => {
+                        snapshotVolume += pos.total_usd || 0;
+                    });
+                } else {
+                    snapshotVolume = snapshot.total_collateral_usd || 0;
+                }
+                
+                // Берем максимальный объем за период
+                maxVolumeInPeriod = Math.max(maxVolumeInPeriod, snapshotVolume);
+            }
         });
         
-        // Суммируем объем из position_details (как в отчете)
-        let marketVolume = 0;
-        if (lastSnapshot.position_details) {
-            Object.values(lastSnapshot.position_details).forEach(pos => {
-                marketVolume += pos.total_usd || 0;
-            });
-        } else {
-            // Fallback на total_collateral_usd если нет position_details
-            marketVolume = lastSnapshot.total_collateral_usd || 0;
+        // Суммируем максимальные объемы по маркетам (если есть несколько контроллеров для одного маркета)
+        if (!marketVolumes[market]) {
+            marketVolumes[market] = 0;
         }
-        
-        if (!marketLastVolumes[market]) {
-            marketLastVolumes[market] = 0;
-        }
-        marketLastVolumes[market] += marketVolume;
+        marketVolumes[market] += maxVolumeInPeriod;
     });
     
     // Сортируем и берем топ-10
-    const sortedMarkets = Object.entries(marketLastVolumes)
+    const sortedMarkets = Object.entries(marketVolumes)
+        .filter(([_, volume]) => volume > 0) // Только маркеты с объемом
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10);
     
@@ -483,24 +703,470 @@ function updateTopMarkets() {
             color: '#667eea'
         },
         text: values.map(v => '$' + (v / 1000000).toFixed(2) + 'M'),
-        textposition: 'outside'
+        textposition: 'outside',
+        hovertemplate: '%{y}: $%{x:,.0f}<extra></extra>'
     }];
     
     const layout = {
         margin: { t: 0, l: 100, r: 80 },
         xaxis: {
-            title: 'Объем последнего снапшота (USD)',
+            title: 'Maximum Volume for Period (USD)',
             gridcolor: '#e0e0e0',
             tickformat: ',.0f'
+        },
+        yaxis: {
+            automargin: true
         }
     };
     
     Plotly.newPlot('topMarkets', data, layout, {responsive: true});
 }
 
+// Update Total Funds Saved
+function updateFundsSavedTotal() {
+    const networkFilter = document.getElementById('network').value;
+    const dateFrom = new Date(document.getElementById('dateFrom').value);
+    const dateTo = new Date(document.getElementById('dateTo').value);
+    
+    let totalLiquidationProtection = 0;
+    let totalFullLiquidations = 0;
+    
+    // Софт-ликвидации (защищенные средства) - use last snapshot per market in date range
+    Object.keys(cacheData).forEach(key => {
+        if (key === 'hard_liquidations') return;
+        
+        const parts = key.split('_');
+        const network = parts[0];
+        const marketData = cacheData[key];
+        
+        if (networkFilter !== 'all' && network !== networkFilter) return;
+        if (!marketData.results || marketData.results.length === 0) return;
+        
+        // Find the last snapshot within date range for this market
+        let lastValidSnapshot = null;
+        
+        marketData.results.forEach(snapshot => {
+            const blockNumber = snapshot.block_number;
+            const snapshotDate = estimateDate(network, blockNumber);
+            
+            if (snapshotDate >= dateFrom && snapshotDate <= dateTo) {
+                if (!lastValidSnapshot || snapshot.block_number > lastValidSnapshot.block_number) {
+                    lastValidSnapshot = snapshot;
+                }
+            }
+        });
+        
+        // Add only the last snapshot's volume for this market
+        if (lastValidSnapshot) {
+            totalLiquidationProtection += lastValidSnapshot.total_collateral_usd || 0;
+        }
+    });
+    
+    // Хард-ликвидации
+    if (processedData.hardLiquidationsList) {
+        processedData.hardLiquidationsList.forEach(liq => {
+            const liqDate = new Date(liq.date);
+            if (liqDate >= dateFrom && liqDate <= dateTo) {
+                if (networkFilter === 'all' || liq.network === networkFilter) {
+                    totalFullLiquidations += liq.debt_repaid || 0;
+                }
+            }
+        });
+    }
+    
+    const totalFundsSaved = totalLiquidationProtection - totalFullLiquidations;
+    
+    const data = [{
+        x: ['Liquidation Protection', 'Full Liquidations', 'Funds Saved'],
+        y: [totalLiquidationProtection, totalFullLiquidations, totalFundsSaved],
+        type: 'bar',
+        marker: {
+            color: ['#ffd700', '#ff6b6b', '#4ecdc4']
+        },
+        text: [
+            `$${(totalLiquidationProtection / 1000000).toFixed(2)}M`,
+            `$${(totalFullLiquidations / 1000000).toFixed(2)}M`,
+            `$${(totalFundsSaved / 1000000).toFixed(2)}M`
+        ],
+        textposition: 'outside'
+    }];
+    
+    const layout = {
+        margin: { t: 30, b: 50 },
+        yaxis: {
+            title: 'Value (USD)',
+            tickformat: ',.0f'
+        },
+        hovermode: 'x unified'
+    };
+    
+    Plotly.newPlot('fundsSavedTotal', data, layout, {responsive: true});
+}
+
+// Update Funds Saved by Network
+function updateFundsSavedByNetwork() {
+    const networkFilter = document.getElementById('network').value;
+    const dateFrom = new Date(document.getElementById('dateFrom').value);
+    const dateTo = new Date(document.getElementById('dateTo').value);
+    
+    const dataByNetwork = {};
+    
+    // Софт-ликвидации по сетям - use last snapshot per market
+    Object.keys(cacheData).forEach(key => {
+        if (key === 'hard_liquidations') return;
+        
+        const parts = key.split('_');
+        const network = parts[0];
+        const marketData = cacheData[key];
+        
+        if (networkFilter !== 'all' && network !== networkFilter) return;
+        if (!marketData.results || marketData.results.length === 0) return;
+        
+        if (!dataByNetwork[network]) {
+            dataByNetwork[network] = {
+                liquidationProtection: 0,
+                fullLiquidations: 0,
+                fundsSaved: 0
+            };
+        }
+        
+        // Find the last snapshot within date range for this market
+        let lastValidSnapshot = null;
+        
+        marketData.results.forEach(snapshot => {
+            const blockNumber = snapshot.block_number;
+            const snapshotDate = estimateDate(network, blockNumber);
+            
+            if (snapshotDate >= dateFrom && snapshotDate <= dateTo) {
+                if (!lastValidSnapshot || snapshot.block_number > lastValidSnapshot.block_number) {
+                    lastValidSnapshot = snapshot;
+                }
+            }
+        });
+        
+        // Add only the last snapshot's volume for this market
+        if (lastValidSnapshot) {
+            dataByNetwork[network].liquidationProtection += lastValidSnapshot.total_collateral_usd || 0;
+        }
+    });
+    
+    // Хард-ликвидации по сетям
+    if (processedData.hardLiquidationsList) {
+        processedData.hardLiquidationsList.forEach(liq => {
+            const liqDate = new Date(liq.date);
+            if (liqDate >= dateFrom && liqDate <= dateTo) {
+                if (networkFilter === 'all' || liq.network === networkFilter) {
+                    const network = liq.network;
+                    
+                    if (!dataByNetwork[network]) {
+                        dataByNetwork[network] = {
+                            liquidationProtection: 0,
+                            fullLiquidations: 0,
+                            fundsSaved: 0
+                        };
+                    }
+                    
+                    dataByNetwork[network].fullLiquidations += liq.debt_repaid || 0;
+                }
+            }
+        });
+    }
+    
+    // Calculate funds saved
+    Object.keys(dataByNetwork).forEach(network => {
+        dataByNetwork[network].fundsSaved = 
+            dataByNetwork[network].liquidationProtection - dataByNetwork[network].fullLiquidations;
+    });
+    
+    const networks = Object.keys(dataByNetwork).sort();
+    const networkLabels = networks.map(n => n.charAt(0).toUpperCase() + n.slice(1));
+    
+    const trace1 = {
+        x: networkLabels,
+        y: networks.map(n => dataByNetwork[n].liquidationProtection),
+        name: 'Liquidation Protection',
+        type: 'bar',
+        marker: { color: '#ffd700' },
+        text: networks.map(n => `$${(dataByNetwork[n].liquidationProtection / 1000000).toFixed(2)}M`),
+        textposition: 'outside'
+    };
+    
+    const trace2 = {
+        x: networkLabels,
+        y: networks.map(n => dataByNetwork[n].fullLiquidations),
+        name: 'Full Liquidations',
+        type: 'bar',
+        marker: { color: '#ff6b6b' },
+        text: networks.map(n => `$${(dataByNetwork[n].fullLiquidations / 1000000).toFixed(2)}M`),
+        textposition: 'outside'
+    };
+    
+    const trace3 = {
+        x: networkLabels,
+        y: networks.map(n => dataByNetwork[n].fundsSaved),
+        name: 'Funds Saved',
+        type: 'bar',
+        marker: { color: '#4ecdc4' },
+        text: networks.map(n => `$${(dataByNetwork[n].fundsSaved / 1000000).toFixed(2)}M`),
+        textposition: 'outside'
+    };
+    
+    const layout = {
+        barmode: 'group',
+        xaxis: { title: 'Network' },
+        yaxis: { 
+            title: 'Value (USD)',
+            tickformat: ',.0f'
+        },
+        hovermode: 'x unified',
+        legend: {
+            x: 0,
+            y: 1,
+            orientation: 'h'
+        }
+    };
+    
+    Plotly.newPlot('fundsSavedByNetwork', [trace1, trace2, trace3], layout, {responsive: true});
+}
+
+// Update Funds Saved chart by Platform
+function updateFundsSavedChart() {
+    const networkFilter = document.getElementById('network').value;
+    const dateFrom = new Date(document.getElementById('dateFrom').value);
+    const dateTo = new Date(document.getElementById('dateTo').value);
+    
+    // Calculate volumes by platforms
+    const dataByPlatform = {
+        'crvUSD': {
+            liquidationProtection: 0,
+            fullLiquidations: 0,
+            fundsSaved: 0
+        },
+        'LlamaLend': {
+            liquidationProtection: 0,
+            fullLiquidations: 0,
+            fundsSaved: 0
+        }
+    };
+    
+    // Софт-ликвидации (защищенные средства)
+    Object.keys(cacheData).forEach(key => {
+        if (key === 'hard_liquidations') return;
+        
+        const parts = key.split('_');
+        const network = parts[0];
+        const marketData = cacheData[key];
+        
+        if (networkFilter !== 'all' && network !== networkFilter) return;
+        if (!marketData.results) return;
+        
+        // Determine platform by key
+        const platform = key.toLowerCase().includes('crvusd') ? 'crvUSD' : 'LlamaLend';
+        
+        marketData.results.forEach(snapshot => {
+            const blockNumber = snapshot.block_number;
+            const snapshotDate = estimateDate(network, blockNumber);
+            
+            if (snapshotDate >= dateFrom && snapshotDate <= dateTo) {
+                dataByPlatform[platform].liquidationProtection += snapshot.total_collateral_usd || 0;
+            }
+        });
+    });
+    
+    // Хард-ликвидации
+    if (processedData.hardLiquidationsList) {
+        processedData.hardLiquidationsList.forEach(liq => {
+            const liqDate = new Date(liq.date);
+            if (liqDate >= dateFrom && liqDate <= dateTo) {
+                if (networkFilter === 'all' || liq.network === networkFilter) {
+                    // Determine platform by market name
+                    const platform = 'LlamaLend'; // Default to LlamaLend as crvUSD rarely appears in hard liquidations
+                    dataByPlatform[platform].fullLiquidations += liq.debt_repaid || 0;
+                }
+            }
+        });
+    }
+    
+    // Calculate funds saved
+    Object.keys(dataByPlatform).forEach(platform => {
+        dataByPlatform[platform].fundsSaved = 
+            dataByPlatform[platform].liquidationProtection - dataByPlatform[platform].fullLiquidations;
+    });
+    
+    const platforms = Object.keys(dataByPlatform);
+    
+    const trace1 = {
+        x: platforms,
+        y: platforms.map(p => dataByPlatform[p].liquidationProtection),
+        name: 'Liquidation Protection',
+        type: 'bar',
+        marker: { color: '#ffd700' },
+        text: platforms.map(p => `$${(dataByPlatform[p].liquidationProtection / 1000000).toFixed(2)}M`),
+        textposition: 'outside'
+    };
+    
+    const trace2 = {
+        x: platforms,
+        y: platforms.map(p => dataByPlatform[p].fullLiquidations),
+        name: 'Full Liquidations',
+        type: 'bar',
+        marker: { color: '#ff6b6b' },
+        text: platforms.map(p => `$${(dataByPlatform[p].fullLiquidations / 1000000).toFixed(2)}M`),
+        textposition: 'outside'
+    };
+    
+    const trace3 = {
+        x: platforms,
+        y: platforms.map(p => dataByPlatform[p].fundsSaved),
+        name: 'Funds Saved',
+        type: 'bar',
+        marker: { color: '#4ecdc4' },
+        text: platforms.map(p => `$${(dataByPlatform[p].fundsSaved / 1000000).toFixed(2)}M`),
+        textposition: 'outside'
+    };
+    
+    const layout = {
+        barmode: 'group',
+        xaxis: { 
+            title: 'Platform'
+        },
+        yaxis: { 
+            title: 'Value (USD)',
+            tickformat: ',.0f'
+        },
+        hovermode: 'x unified',
+        legend: {
+            x: 0,
+            y: 1,
+            orientation: 'h'
+        }
+    };
+    
+    Plotly.newPlot('fundsSavedChart', [trace1, trace2, trace3], layout, {responsive: true});
+}
+
+// Update Top Tokens by Hard Liquidation chart
+function updateTopTokensChart() {
+    const networkFilter = document.getElementById('network').value;
+    const dateFrom = new Date(document.getElementById('dateFrom').value);
+    const dateTo = new Date(document.getElementById('dateTo').value);
+    
+    // Function to extract token from market/controller name
+    function extractToken(market) {
+        if (!market) return 'unknown';
+        
+        // Common token patterns in market names
+        const tokenPatterns = {
+            'wsteth': 'wstETH',
+            'weth': 'WETH',
+            'wbtc': 'WBTC',
+            'sfrxeth': 'sfrxETH',
+            'eth': 'ETH',
+            'frxeth': 'frxETH',
+            'yneth': 'ynETH',
+            'pufeth': 'pufETH',
+            'asdcrv': 'asdCRV',
+            'arb': 'ARB',
+            'crv': 'CRV',
+            'fxs': 'FXS',
+            'lbtc': 'lbtc',
+            'weeeth': 'weETH',
+            'usde': 'USDe',
+            'usdc': 'USDC',
+            'usdt': 'USDT'
+        };
+        
+        const marketLower = market.toLowerCase();
+        
+        // Check for token patterns
+        for (const [pattern, token] of Object.entries(tokenPatterns)) {
+            if (marketLower.includes(pattern)) {
+                return token;
+            }
+        }
+        
+        // If no pattern matches, try to extract from market name
+        // Remove common prefixes/suffixes
+        let cleaned = market.replace(/^0x[a-fA-F0-9]+$/i, 'unknown')
+                           .replace(/-.*/, '')
+                           .replace(/_.*/, '');
+        
+        return cleaned || 'unknown';
+    }
+    
+    // Count hard liquidations by tokens
+    const tokenData = {};
+    
+    if (processedData.hardLiquidationsList) {
+        processedData.hardLiquidationsList.forEach(liq => {
+            const liqDate = new Date(liq.date);
+            if (liqDate >= dateFrom && liqDate <= dateTo) {
+                if (networkFilter === 'all' || liq.network === networkFilter) {
+                    const token = extractToken(liq.market);
+                    
+                    if (!tokenData[token]) {
+                        tokenData[token] = 0;
+                    }
+                    
+                    tokenData[token] += liq.debt_repaid || 0;
+                }
+            }
+        });
+    }
+    
+    // Sort and take top-15
+    const sortedTokens = Object.entries(tokenData)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 15);
+    
+    const tokens = sortedTokens.map(t => t[0]);
+    const values = sortedTokens.map(t => t[1]);
+    
+    const data = [{
+        x: values,
+        y: tokens,
+        type: 'bar',
+        orientation: 'h',
+        marker: {
+            color: values.map((v, i) => {
+                // Gradient from dark green to light green (as in example)
+                const greenValue = Math.floor(100 + (155 * (tokens.length - i - 1) / tokens.length));
+                return `rgb(76, ${greenValue}, 80)`;
+            })
+        },
+        text: values.map(v => `$${v.toLocaleString('en-US', {maximumFractionDigits: 0})}`),
+        textposition: 'outside',
+        textfont: {
+            size: 11
+        },
+        hovertemplate: '%{y}: $%{x:,.0f}<extra></extra>'
+    }];
+    
+    const layout = {
+        title: 'Top Collateral Tokens by Full Liquidation Value',
+        margin: { t: 40, l: 80, r: 120, b: 60 },
+        xaxis: {
+            title: 'Liquidation Value ($)',
+            gridcolor: '#e0e0e0',
+            tickformat: ',.0f',
+            showgrid: true
+        },
+        yaxis: {
+            automargin: true,
+            tickfont: {
+                size: 11
+            }
+        },
+        plot_bgcolor: 'white',
+        paper_bgcolor: 'white'
+    };
+    
+    Plotly.newPlot('topTokensChart', data, layout, {responsive: true});
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Set default dates
+    // Set default dates - last month
     const today = new Date();
     const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
     
